@@ -1,0 +1,956 @@
+/*
+ * Duas famílias com papéis distintos, no lugar do Inter para tudo.
+ *
+ * `Space Grotesk` (display) tem numerais de personalidade — e este sistema é
+ * feito de dinheiro na tela: total do dia, valor da nota, saldo do caixa. Os
+ * números viram parte da identidade em vez de carga neutra.
+ *
+ * `Plus Jakarta Sans` (texto/interface) foi escolhida pelo tamanho pequeno:
+ * a maior parte da interface vive entre 11 e 14px, e ela mantém a abertura
+ * das letras nesse corpo melhor que a média das grotescas.
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ══════════════════════════════════════════════════════════════════════
+   TOKENS — fonte única de verdade do design system.
+   Tudo em canal RGB puro para o Tailwind aplicar <alpha-value>.
+   ══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ---------- TEMA CLARO ---------- */
+  /* Neutros levemente tingidos de violeta: evita o cinza "escritório". */
+  --canvas: 245 244 250;
+  --surface: 255 255 255;
+  --surface-raised: 250 249 253;
+
+  --ink: 26 24 46;
+  --mist: 88 84 122;
+  --faint: 132 127 165;
+  --muted: 168 164 192;
+  --fg: 26 24 46;
+
+  --accent: 109 92 232;
+  --accent-soft: 128 112 240;
+  --accent-strong: 86 68 208;
+
+  --success: 22 155 110;
+  --warning: 190 122 12;
+  --danger: 208 62 62;
+
+  /* Vidro — no claro o vidro é branco e luminoso */
+  --glass-bg: 255 255 255;
+  --glass-alpha: 0.72;
+  --glass-border: 26 24 46;
+  --glass-border-alpha: 0.08;
+  --glass-highlight: 255 255 255;
+
+  /* Sombras — no claro precisam ser suaves e coloridas, não pretas */
+  --shadow-color: 60 50 120;
+  --shadow-1: 0 1px 2px rgb(var(--shadow-color) / 0.06), 0 2px 8px -2px rgb(var(--shadow-color) / 0.08);
+  --shadow-2: 0 2px 4px rgb(var(--shadow-color) / 0.06), 0 8px 24px -6px rgb(var(--shadow-color) / 0.12);
+  --shadow-3: 0 4px 8px rgb(var(--shadow-color) / 0.07), 0 20px 48px -12px rgb(var(--shadow-color) / 0.18);
+
+  /* Brilho ambiente do fundo */
+  --aurora-1: 109 92 232;
+  --aurora-2: 120 160 255;
+  --aurora-alpha: 0.1;
+
+  /* Nível de efeito (sobrescrito por [data-fx]) */
+  --blur-sm: 8px;
+  --blur-md: 16px;
+  --blur-lg: 28px;
+
+  --ring-focus: 0 0 0 3px rgb(var(--accent) / 0.28);
+
+  /* Carregadas em `main.tsx` a partir do pacote — ver o comentário de lá.
+     A pilha de reserva só vale para o instante antes de a fonte pintar. */
+  --font-display: "Sora Variable", "Sora", system-ui, sans-serif;
+  --font-body: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.dark {
+  /* ---------- TEMA ESCURO ---------- */
+  --canvas: 12 11 24;
+  --surface: 22 20 42;
+  --surface-raised: 30 27 55;
+
+  --ink: 240 237 255;
+  --mist: 166 161 202;
+  --faint: 122 116 160;
+  --muted: 88 83 122;
+  --fg: 255 255 255;
+
+  --accent: 124 110 245;
+  --accent-soft: 169 156 248;
+  --accent-strong: 196 186 255;
+
+  --success: 93 202 165;
+  --warning: 250 199 117;
+  --danger: 240 149 149;
+
+  --glass-bg: 36 33 64;
+  --glass-alpha: 0.55;
+  --glass-border: 255 255 255;
+  --glass-border-alpha: 0.09;
+  --glass-highlight: 255 255 255;
+
+  --shadow-color: 0 0 0;
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.3), 0 2px 8px -2px rgb(0 0 0 / 0.35);
+  --shadow-2: 0 2px 6px rgb(0 0 0 / 0.35), 0 10px 28px -8px rgb(0 0 0 / 0.5);
+  --shadow-3: 0 6px 14px rgb(0 0 0 / 0.4), 0 24px 60px -12px rgb(0 0 0 / 0.65);
+
+  --aurora-1: 124 110 245;
+  --aurora-2: 80 140 255;
+  --aurora-alpha: 0.16;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   PALETAS — cada tema troca só os neutros, o vidro e a aurora.
+   O accent continua vindo de [data-accent], que é aplicado depois: são
+   duas dimensões independentes (6 paletas × 9 destaques).
+   As paletas escuras herdam de `.dark` tudo que não sobrescrevem aqui.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ---------- Meia-noite — azul profundo ---------- */
+.dark[data-theme="meia-noite"] {
+  --canvas: 8 14 30;
+  --surface: 16 24 48;
+  --surface-raised: 23 34 64;
+
+  --ink: 232 238 255;
+  --mist: 152 168 205;
+  --faint: 106 124 162;
+  --muted: 74 90 126;
+
+  --glass-bg: 24 37 72;
+  --glass-alpha: 0.58;
+
+  --aurora-1: 56 118 240;
+  --aurora-2: 92 182 255;
+}
+
+/* ---------- Floresta — verde escuro ---------- */
+.dark[data-theme="floresta"] {
+  --canvas: 10 20 16;
+  --surface: 16 32 26;
+  --surface-raised: 23 45 37;
+
+  --ink: 231 245 237;
+  --mist: 148 180 164;
+  --faint: 106 138 122;
+  --muted: 74 104 91;
+
+  --glass-bg: 23 48 39;
+  --glass-alpha: 0.58;
+
+  --aurora-1: 42 165 118;
+  --aurora-2: 96 200 150;
+}
+
+/* ---------- Ardósia — grafite neutro ---------- */
+.dark[data-theme="ardosia"] {
+  --canvas: 17 19 24;
+  --surface: 26 29 36;
+  --surface-raised: 35 39 48;
+
+  --ink: 236 238 243;
+  --mist: 158 164 178;
+  --faint: 114 121 136;
+  --muted: 82 89 103;
+
+  --glass-bg: 38 42 52;
+  --glass-alpha: 0.6;
+
+  --aurora-1: 118 130 152;
+  --aurora-2: 88 110 142;
+  --aurora-alpha: 0.12;
+}
+
+/* ---------- Sépia — claro e quente ---------- */
+:root[data-theme="sepia"] {
+  --canvas: 245 240 232;
+  --surface: 255 251 245;
+  --surface-raised: 250 245 236;
+
+  --ink: 46 38 30;
+  --mist: 106 92 76;
+  --faint: 146 130 110;
+  --muted: 178 163 144;
+  --fg: 46 38 30;
+
+  --glass-bg: 255 251 245;
+  --glass-alpha: 0.74;
+  --glass-border: 46 38 30;
+
+  /* Sombra quente: preto puro sobre bege lê como sujeira. */
+  --shadow-color: 90 66 36;
+
+  --aurora-1: 192 142 72;
+  --aurora-2: 214 172 112;
+  --aurora-alpha: 0.12;
+}
+
+/* ---------- Ônix — preto absoluto ---------- */
+/*
+ * Preto real (#000) para telas OLED: pixel apagado gasta menos bateria e o
+ * contraste fica perfeito. O truque para não virar "buraco" é o resto da
+ * escala não ser cinza puro — as superfícies têm um toque quase imperceptível
+ * do accent, o que dá profundidade sem sujar o preto.
+ */
+.dark[data-theme="onix"] {
+  --canvas: 0 0 0;
+  --surface: 10 10 11;
+  --surface-raised: 22 22 24;
+
+  --ink: 245 245 247;
+  --mist: 160 160 168;
+  --faint: 112 112 120;
+  --muted: 78 78 86;
+  --fg: 255 255 255;
+
+  /* Vidro quase opaco: sobre preto, vidro translúcido demais some. */
+  --glass-bg: 18 18 20;
+  --glass-alpha: 0.72;
+  --glass-border: 255 255 255;
+  --glass-border-alpha: 0.07;
+
+  /* Sombra não existe sobre preto — o que separa os planos é a borda. */
+  --shadow-1: 0 0 0 1px rgb(255 255 255 / 0.04);
+  --shadow-2: 0 0 0 1px rgb(255 255 255 / 0.06), 0 8px 28px -12px rgb(0 0 0 / 0.9);
+  --shadow-3: 0 0 0 1px rgb(255 255 255 / 0.08), 0 20px 50px -16px rgb(0 0 0 / 1);
+
+  /* Aurora bem contida: brilho forte sobre preto vira mancha. */
+  --aurora-alpha: 0.1;
+}
+
+/* ---------- Accents ---------- */
+/*
+ * Roxo revisto: o anterior (109 92 232 / 124 110 245) era o violeta médio que
+ * todo painel usa — pouca saturação e nenhum sentido de direção. Este puxa
+ * para a íris: mais cromático, base mais profunda e o `soft` claramente mais
+ * claro, o que dá degrau visível entre estado normal, hover e ativo.
+ */
+:root[data-accent="roxo"] {
+  --accent: 96 64 226;
+  --accent-soft: 124 94 240;
+  --accent-strong: 72 42 182;
+  --aurora-1: 104 72 232;
+}
+.dark[data-accent="roxo"] {
+  --accent: 141 112 255;
+  --accent-soft: 182 160 255;
+  --accent-strong: 214 200 255;
+  --aurora-1: 141 112 255;
+}
+
+:root[data-accent="azul"] {
+  --accent: 30 130 220;
+  --accent-soft: 56 150 235;
+  --accent-strong: 20 105 190;
+  --aurora-1: 40 130 220;
+}
+.dark[data-accent="azul"] {
+  --accent: 74 168 255;
+  --accent-soft: 130 195 255;
+  --accent-strong: 175 215 255;
+  --aurora-1: 74 168 255;
+}
+
+:root[data-accent="verde"] {
+  --accent: 22 155 110;
+  --accent-soft: 30 175 126;
+  --accent-strong: 15 130 92;
+  --aurora-1: 30 170 120;
+}
+.dark[data-accent="verde"] {
+  --accent: 62 207 142;
+  --accent-soft: 120 225 175;
+  --accent-strong: 170 240 210;
+  --aurora-1: 62 207 142;
+}
+
+:root[data-accent="rosa"] {
+  --accent: 214 54 128;
+  --accent-soft: 232 78 148;
+  --accent-strong: 182 38 108;
+  --aurora-1: 224 70 140;
+}
+.dark[data-accent="rosa"] {
+  --accent: 240 98 160;
+  --accent-soft: 250 140 190;
+  --accent-strong: 255 190 220;
+  --aurora-1: 240 98 160;
+}
+
+:root[data-accent="laranja"] {
+  --accent: 200 118 10;
+  --accent-soft: 222 136 18;
+  --accent-strong: 168 96 6;
+  --aurora-1: 215 130 20;
+}
+.dark[data-accent="laranja"] {
+  --accent: 245 166 35;
+  --accent-soft: 250 195 100;
+  --accent-strong: 255 220 160;
+  --aurora-1: 245 166 35;
+}
+
+:root[data-accent="teal"] {
+  --accent: 0 150 170;
+  --accent-soft: 0 175 195;
+  --accent-strong: 0 125 145;
+  --aurora-1: 0 160 180;
+}
+.dark[data-accent="teal"] {
+  --accent: 0 200 220;
+  --accent-soft: 80 220 240;
+  --accent-strong: 160 240 255;
+  --aurora-1: 0 200 220;
+}
+
+:root[data-accent="vinho"] {
+  --accent: 150 40 70;
+  --accent-soft: 175 52 86;
+  --accent-strong: 125 28 55;
+  --aurora-1: 160 45 75;
+}
+.dark[data-accent="vinho"] {
+  --accent: 220 70 110;
+  --accent-soft: 235 110 145;
+  --accent-strong: 250 160 185;
+  --aurora-1: 220 70 110;
+}
+
+:root[data-accent="dourado"] {
+  --accent: 180 130 30;
+  --accent-soft: 200 150 40;
+  --accent-strong: 155 110 20;
+  --aurora-1: 190 140 35;
+}
+.dark[data-accent="dourado"] {
+  --accent: 240 190 50;
+  --accent-soft: 245 210 110;
+  --accent-strong: 255 230 170;
+  --aurora-1: 240 190 50;
+}
+
+:root[data-accent="preto"] {
+  --accent: 60 60 80;
+  --accent-soft: 90 90 110;
+  --accent-strong: 40 40 55;
+  --aurora-1: 70 70 90;
+}
+.dark[data-accent="preto"] {
+  --accent: 200 200 220;
+  --accent-soft: 225 225 240;
+  --accent-strong: 240 240 250;
+  --aurora-1: 200 200 220;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   NÍVEIS DE EFEITO — data-fx no <html>
+   Controla custo de GPU sem re-renderizar nada em React.
+   ══════════════════════════════════════════════════════════════════════ */
+
+[data-fx="full"] {
+  --blur-sm: 10px;
+  --blur-md: 20px;
+  --blur-lg: 32px;
+  --fx-glow: 1;
+  --fx-aurora: 1;
+}
+
+[data-fx="balanced"] {
+  --blur-sm: 6px;
+  --blur-md: 12px;
+  --blur-lg: 16px;
+  --fx-glow: 1;
+  --fx-aurora: 1;
+}
+
+/* Leve: zero blur (o filtro é o que mais pesa), zero aurora, sombra mínima */
+[data-fx="lite"] {
+  --blur-sm: 0px;
+  --blur-md: 0px;
+  --blur-lg: 0px;
+  --fx-glow: 0;
+  --fx-aurora: 0;
+  --glass-alpha: 1;
+  --shadow-1: 0 1px 2px rgb(var(--shadow-color) / 0.1);
+  --shadow-2: 0 2px 6px rgb(var(--shadow-color) / 0.12);
+  --shadow-3: 0 4px 12px rgb(var(--shadow-color) / 0.16);
+}
+
+[data-fx="lite"] .glass,
+[data-fx="lite"] .glass-strong,
+[data-fx="lite"] .glass-panel {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   VITRINE — identidade fixa, imune ao tema salvo
+   ══════════════════════════════════════════════════════════════════════
+   A landing é página pública: quem chega nela pode nunca ter usado o
+   sistema. O tema e o destaque que o cliente escolheu em Aparência valem
+   dentro do produto, não na propaganda dele — senão a mesma página aparece
+   verde para um e vinho para outro, e a marca deixa de ter cara própria.
+
+   Por isso a vitrine redeclara os tokens que usa. Como a regra mora num
+   contêiner e não no `html`, ela ganha de qualquer `[data-theme]` ou
+   `[data-accent]` herdado, sem precisar de `!important`.
+   ══════════════════════════════════════════════════════════════════════ */
+.vitrine {
+  --canvas: 12 11 24;
+  --surface: 22 20 42;
+  --surface-raised: 30 27 55;
+
+  --ink: 240 237 255;
+  --mist: 166 161 202;
+  --faint: 122 116 160;
+  --muted: 88 83 122;
+  --fg: 255 255 255;
+
+  --accent: 141 112 255;
+  --accent-soft: 182 160 255;
+  --accent-strong: 214 200 255;
+
+  --success: 93 202 165;
+  --warning: 250 199 117;
+  --danger: 240 149 149;
+
+  --glass-bg: 36 33 64;
+  --glass-alpha: 0.55;
+  --glass-border: 255 255 255;
+  --glass-border-alpha: 0.09;
+  --glass-highlight: 255 255 255;
+
+  --aurora-1: 141 112 255;
+  --aurora-2: 80 140 255;
+  --aurora-alpha: 0.16;
+
+  background-color: rgb(var(--canvas));
+  color: rgb(var(--ink));
+}
+
+
+/* ---------- Modo aplicativo instalado ---------- */
+/*
+ * `touch-action: manipulation` mata o zoom de duplo-toque, que o viewport
+ * sozinho não impede. `overscroll-behavior: none` tira o efeito de puxar a
+ * página (o "elástico") que denuncia que aquilo é um site dentro de um app.
+ * Só valem quando instalado — no navegador tudo continua padrão.
+ */
+:root[data-modo="app"] {
+  touch-action: manipulation;
+  overscroll-behavior: none;
+}
+
+:root[data-modo="app"] body {
+  overscroll-behavior: none;
+  /* Texto selecionável só onde faz sentido; segurar o dedo num botão de app
+     não deve abrir a alça de seleção. */
+  -webkit-touch-callout: none;
+}
+
+:root[data-modo="app"] input,
+:root[data-modo="app"] textarea,
+:root[data-modo="app"] [contenteditable] {
+  -webkit-touch-callout: default;
+  user-select: text;
+}
+
+/* ---------- Área segura do topo (iPhone) ---------- */
+/*
+ * Com `apple-mobile-web-app-status-bar-style: black-translucent` o app ocupa a
+ * tela inteira — inclusive por baixo do relógio e da bateria. É o visual certo
+ * para um aplicativo, mas exige devolver o espaço no conteúdo: sem isto o
+ * cabeçalho de cada tela nascia debaixo da barra de status e ficava ilegível.
+ *
+ * Vale só no app instalado; no navegador o inset é 0 e a regra não muda nada.
+ */
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Barras fixas com vidro precisam do inset dentro delas, não fora, senão o
+   desfoque para antes da barra de status e aparece uma faixa cortada. */
+.safe-top-fixed {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* ---------- Escala tipográfica ---------- */
+html {
+  font-size: 16px;
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+}
+html[data-font-scale="sm"] {
+  font-size: 15px;
+}
+html[data-font-scale="lg"] {
+  font-size: 17.5px;
+}
+
+/* ---------- Movimento ---------- */
+[data-motion="reduce"] *,
+[data-motion="reduce"] *::before,
+[data-motion="reduce"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   BASE
+   ══════════════════════════════════════════════════════════════════════ */
+
+body {
+  /*
+   * Sem `antialiased`.
+   *
+   * `-webkit-font-smoothing: antialiased` é herança de projeto feito no Mac.
+   * No Windows ele DESLIGA o ClearType (renderização por subpixel) e afina o
+   * traço: a letra perde os subpixels que dão nitidez e passa a parecer trêmula,
+   * principalmente nos 11–13px em que este sistema vive. `auto` devolve o
+   * ClearType e é o padrão certo aqui.
+   */
+  @apply bg-canvas font-sans text-ink;
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  /* Era -0.011em: apertar o espaçamento em corpo pequeno junta as hastes e
+     soma ao borrão. Neutro é mais legível nesta escala. */
+  letter-spacing: 0;
+  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color 240ms ease,
+    color 240ms ease;
+}
+
+button,
+a,
+[role="button"] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+input,
+textarea,
+select {
+  font-size: 16px;
+}
+
+.nums {
+  font-variant-numeric: tabular-nums;
+}
+
+input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+::selection {
+  background: rgb(var(--accent) / 0.28);
+  color: rgb(var(--ink));
+}
+
+/* Scrollbar discreta e temática */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--fg) / 0.16) transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: rgb(var(--fg) / 0.14);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(var(--accent) / 0.45);
+  background-clip: content-box;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   UTILITÁRIOS DE SUPERFÍCIE
+   ══════════════════════════════════════════════════════════════════════ */
+
+@layer components {
+  /* Vidro padrão — cards, painéis, barras */
+  .glass {
+    background-color: rgb(var(--glass-bg) / var(--glass-alpha));
+    backdrop-filter: blur(var(--blur-md)) saturate(160%);
+    -webkit-backdrop-filter: blur(var(--blur-md)) saturate(160%);
+    border: 1px solid rgb(var(--glass-border) / var(--glass-border-alpha));
+  }
+
+  /* Vidro mais opaco — modais, sidebar, overlays de leitura longa */
+  .glass-strong {
+    background-color: rgb(var(--glass-bg) / calc(var(--glass-alpha) + 0.18));
+    backdrop-filter: blur(var(--blur-lg)) saturate(180%);
+    -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(180%);
+    border: 1px solid rgb(var(--glass-border) / calc(var(--glass-border-alpha) + 0.04));
+  }
+
+  /*
+   * Vidro líquido — cartões de entrada e cadastro.
+   *
+   * Três camadas sobre o vidro forte: um degradê diagonal que simula a luz
+   * atravessando o material, um brilho de borda superior e um halo interno.
+   * Tudo em cima dos tokens do tema, então acompanha as 7 paletas e os 9
+   * destaques — não é um efeito de cor fixa colado por cima.
+   */
+  .glass-liquid {
+    position: relative;
+    background-image:
+      linear-gradient(135deg, rgb(var(--glass-highlight) / 0.1) 0%, transparent 45%),
+      linear-gradient(220deg, rgb(var(--accent) / 0.1) 0%, transparent 55%);
+    background-color: rgb(var(--glass-bg) / calc(var(--glass-alpha) + 0.2));
+    backdrop-filter: blur(var(--blur-lg)) saturate(190%);
+    -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(190%);
+    border: 1px solid rgb(var(--glass-border) / calc(var(--glass-border-alpha) + 0.06));
+    box-shadow:
+      inset 0 1px 0 rgb(var(--glass-highlight) / 0.16),
+      inset 0 -1px 0 rgb(var(--glass-border) / 0.04),
+      var(--shadow-3);
+  }
+
+  /* O fio de luz que corre a borda de cima — o "menisco" do vidro. */
+  .glass-liquid::before {
+    content: "";
+    position: absolute;
+    inset-inline: 12%;
+    top: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgb(var(--accent-soft) / 0.7), transparent);
+    pointer-events: none;
+  }
+
+  /* Vidro sutil — hovers, chips, linhas de tabela */
+  .glass-subtle {
+    background-color: rgb(var(--glass-bg) / calc(var(--glass-alpha) - 0.3));
+    backdrop-filter: blur(var(--blur-sm));
+    -webkit-backdrop-filter: blur(var(--blur-sm));
+    border: 1px solid rgb(var(--glass-border) / var(--glass-border-alpha));
+  }
+
+  /* Reflexo superior — dá a leitura de "vidro real" */
+  .glass-sheen {
+    position: relative;
+  }
+  .glass-sheen::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgb(var(--glass-highlight) / 0.5), transparent);
+    opacity: calc(0.7 * var(--fx-glow, 1));
+    pointer-events: none;
+  }
+
+  .elev-1 {
+    box-shadow: var(--shadow-1);
+  }
+  .elev-2 {
+    box-shadow: var(--shadow-2);
+  }
+  .elev-3 {
+    box-shadow: var(--shadow-3);
+  }
+
+  /* Card padrão do sistema */
+  .card {
+    @apply glass elev-1 rounded-2xl;
+  }
+
+  .card-interactive {
+    @apply card transition-all duration-200;
+  }
+  .card-interactive:hover {
+    box-shadow: var(--shadow-2);
+    border-color: rgb(var(--accent) / 0.28);
+    transform: translateY(-1px);
+  }
+
+  /* Fundo com aurora — usado no canvas das páginas */
+  .aurora {
+    position: relative;
+    isolation: isolate;
+  }
+  .aurora::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: var(--fx-aurora, 1);
+    background:
+      radial-gradient(60% 55% at 15% 0%, rgb(var(--aurora-1) / var(--aurora-alpha)), transparent 70%),
+      radial-gradient(50% 50% at 90% 10%, rgb(var(--aurora-2) / calc(var(--aurora-alpha) * 0.75)), transparent 70%);
+  }
+
+  .focus-ring:focus-visible {
+    outline: none;
+    box-shadow: var(--ring-focus);
+  }
+
+  /* Texto com gradiente de destaque */
+  .text-gradient {
+    background: linear-gradient(135deg, rgb(var(--accent-soft)), rgb(var(--accent)));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   TRANSIÇÕES DE ROTA
+   ══════════════════════════════════════════════════════════════════════ */
+
+@keyframes route-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes tela-entra {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.route-enter {
+  animation: route-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Entrada escalonada de listas e grades */
+.stagger > * {
+  animation: route-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.stagger > *:nth-child(1) {
+  animation-delay: 0.02s;
+}
+.stagger > *:nth-child(2) {
+  animation-delay: 0.06s;
+}
+.stagger > *:nth-child(3) {
+  animation-delay: 0.1s;
+}
+.stagger > *:nth-child(4) {
+  animation-delay: 0.14s;
+}
+.stagger > *:nth-child(n + 5) {
+  animation-delay: 0.18s;
+}
+
+[data-motion="reduce"] .route-enter,
+[data-motion="reduce"] .stagger > * {
+  animation: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   IMPRESSÃO — folha A4
+   ══════════════════════════════════════════════════════════════════════ */
+
+.folha-a4 {
+  width: 210mm;
+  min-height: 297mm;
+  padding: 14mm 15mm;
+  box-sizing: border-box;
+}
+
+@page {
+  size: A4 portrait;
+  margin: 0;
+}
+
+@media print {
+  /* Papel é sempre claro, independente do tema em uso na tela. */
+  html,
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+
+  /* Esconde tudo que não faz parte da folha */
+  body * {
+    visibility: hidden;
+  }
+  .area-impressao,
+  .area-impressao * {
+    visibility: visible;
+  }
+  .area-impressao {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .no-print,
+  aside,
+  header.no-print {
+    display: none !important;
+  }
+
+  .folha-a4 {
+    width: 100%;
+    min-height: auto;
+    box-shadow: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  /* Vidro e sombra não existem no papel */
+  .glass,
+  .glass-strong,
+  .glass-subtle,
+  .card {
+    background: #fff !important;
+    backdrop-filter: none !important;
+    box-shadow: none !important;
+  }
+
+  tr,
+  section {
+    break-inside: avoid;
+  }
+  thead {
+    display: table-header-group;
+  }
+}
+
+/* ---------- View Transitions (troca de tema) ---------- */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+  z-index: 1;
+}
+::view-transition-new(root) {
+  z-index: 2;
+}
+
+/* ---------- Folha (bottom sheet) ---------- */
+@keyframes cf-sheet {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [style*="cf-sheet"] { animation: none !important; }
+}
+
+/*
+ * A barra inferior é fixa e cobriria o fim do conteúdo. O respiro entra no
+ * corpo rolável das telas, e só no celular — no desktop a barra nem existe.
+ */
+@media (max-width: 767px) {
+  main .overflow-y-auto {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  }
+}
+
+/* ---------- Papéis tipográficos ---------- */
+/*
+ * A display entra só em título e número grande. Espalhá-la pelo texto corrido
+ * anularia o contraste entre as duas famílias — que é justamente o ponto.
+ */
+h1, h2, h3,
+.display,
+.nums {
+  font-family: var(--font-display);
+  letter-spacing: -0.015em;
+}
+
+/* Valores em coluna precisam de dígito de largura fixa para alinharem. */
+.nums,
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Foco visível: padrão da casa ---------- */
+/*
+ * Piso de acessibilidade aplicado num lugar só, em vez de depender de cada
+ * tela lembrar de pôr `.focus-ring`. Auditoria encontrou a maioria dos botões
+ * sem indicador nenhum — quem navega por teclado ficava sem saber onde está.
+ *
+ * O prefixo `:root` existe por especificidade, não por escopo. Sem ele a
+ * regra perdia para as utilidades `outline-none` / `focus:outline-none` do
+ * Tailwind (0-2-0) e o anel saía transparente. Com `:root` a conta vai a
+ * 0-2-1 e ganha, sem precisar de `!important`.
+ *
+ * `outline` (e não `box-shadow`) porque não disputa com as sombras já
+ * existentes e acompanha o `border-radius`.
+ *
+ * `:focus-visible` e não `:focus`: quem clica com o mouse não vê anel.
+ */
+:root a:focus-visible,
+:root button:focus-visible,
+:root input:focus-visible,
+:root select:focus-visible,
+:root textarea:focus-visible,
+:root summary:focus-visible,
+:root [role="button"]:focus-visible,
+:root [tabindex]:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+}
+
+/* ---------- Reveal da landing ---------- */
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(22px);
+  transition: opacity 0.6s cubic-bezier(0.22, 0.61, 0.36, 1), transform 0.6s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+[data-reveal].revelado {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal] {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}

@@ -1,0 +1,1260 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { LegacyRef, ReactNode } from "react";
+import { ShoppingCart, Plus, Receipt, UserCheck, DollarSign, Wallet, AlertCircle, Hash, TrendingUp, ChevronRight, Search, UserPlus, PackagePlus, FileText, Check, Loader2, Pencil, CalendarDays } from "lucide-react";
+
+import { useNavigate } from "react-router-dom";
+
+import Invoice from "@/features/vendas/components/Invoice";
+import { PageScreen, PrimaryAction, GhostAction } from "@/shared/ui/PageShell";
+import SeletorDia from "@/shared/ui/SeletorDia";
+import OrcamentoService, { type Orcamento } from "@/features/orcamentos/services/orcamento.service";
+import Sheet from "@/shared/ui/Sheet";
+import PDVMobile, { type VendaResumo } from "@/features/vendas/components/PDVMobile";
+import { useIsMobile } from "@/shared/hooks/useIsMobile";
+import useAuth from "@/features/auth/store/auth.store";
+
+import useVendaStore from "@/features/vendas/store/venda.store";
+import useClienteStore from "@/features/clientes/store/cliente.store";
+import { eStatus } from "@/shared/domain/cliente";
+import useSincronizacao from "@/shared/realtime/useSincronizacao";
+import ClienteForm from "@/features/clientes/components/ClienteForm";
+import { ProdutoForm } from "@/features/estoque/components/ProdutoForm";
+import ProductService from "@/features/estoque/services/product.service";
+import type { ProductFormData } from "@/features/estoque/schema/product.schema";
+import type { ClienteFormData } from "@/features/clientes/schema/cliente.schema";
+import { Modal } from "@/shared/ui/Modal";
+import { useAlert } from "@/shared/ui/Alert";
+import { extractErrorMessage, getErrorTitle } from "@/shared/utils/errorHandler";
+import { formatCurrency } from "@/shared/utils/currency";
+
+import Dica from "@/shared/ui/Dica";
+import MenuFormatoDownload from "@/shared/ui/MenuFormatoDownload";
+import NotaResumo from "@/features/vendas/components/NotaResumo";
+import OrcamentoNota from "@/features/orcamentos/components/OrcamentoNota";
+import { gerarBlobNota } from "@/shared/ui/DownloadButton";
+import { baixarNotaPdf } from "@/shared/ui/downloadNota";
+import useEnterprise from "@/features/empresa/store/enterprise.store";
+
+import { estaAberto as estaAberta, totalDoPedido, type ItemPedidoType, type PedidoClienteType } from "@/shared/domain/pedido";
+import { formatTime as horaVenda, formatDate as dataBr, diaExtenso, isSameDay as noMesmoDia, isSameMonth as ehDesteMes } from "@/shared/utils/date";
+import { getInitials as iniciais, formatDocument } from "@/shared/utils/format";
+import { Selo, type TomSelo } from "@/shared/ui/StatusBadge";
+
+// Só o essencial: quem é o cliente e (se existir) qual pedido.
+/* `clienteId` opcional: orçamento é montado para nome livre, sem cadastro. */
+type NotaAberta = {
+  id?: string;
+  clienteId?: string;
+  nome?: string;
+  orcamento?: boolean;
+  /** Itens com que a nota abre — quem vem de um orçamento não relança nada. */
+  itens?: ItemPedidoType[];
+  /** Reescrevendo esta proposta em vez de criar outra. */
+  orcamentoId?: string;
+  /** Proposta a marcar como aprovada quando a venda for gerada. */
+  aprovarOrcamentoId?: string;
+};
+
+/* --------------------------- Componentes locais --------------------------- */
+
+const TONES = {
+  accent: "bg-accent/[0.15] text-accent-soft ring-accent/20",
+  success: "bg-success/15 text-success ring-success/20",
+  warning: "bg-warning/15 text-warning ring-warning/20",
+  neutral: "bg-fg/[0.06] text-mist ring-fg/10",
+} as const;
+
+const Kpi = ({ icon, label, value, tone = "neutral" }: { icon: ReactNode; label: string; value: string; tone?: keyof typeof TONES }) => (
+  <div className="card-interactive glass-sheen p-4">
+    <div className={`mb-2.5 flex h-9 w-9 items-center justify-center rounded-xl ring-1 ring-inset ${TONES[tone]}`}>{icon}</div>
+    <p className="text-[11px] text-faint">{label}</p>
+    <p className="nums mt-0.5 text-xl tracking-tight text-ink">{value}</p>
+  </div>
+);
+
+const TOM_PAGAMENTO = { PAGA: "sucesso", PARCIAL: "info", ABERTA: "alerta" } as const;
+const ROTULO_PAGAMENTO = { PAGA: "Pago", PARCIAL: "Parcial", ABERTA: "Em aberto" } as const;
+
+const StatusBadge = ({ status }: { status: keyof typeof TOM_PAGAMENTO }) => (
+  <Selo tom={TOM_PAGAMENTO[status]}>{ROTULO_PAGAMENTO[status]}</Selo>
+);
+
+const Avatar = ({ name, size = "md" }: { name?: string; size?: "sm" | "md" }) => {
+  const dim = size === "sm" ? "h-8 w-8 text-[10px]" : "h-9 w-9 text-[11px]";
+  return <div className={`flex ${dim} shrink-0 items-center justify-center rounded-xl border border-accent/25 bg-gradient-to-br from-accent/30 to-accent-soft/10 text-accent-soft`}>{iniciais(name)}</div>;
+};
+
+/**
+ * Deriva o status de pagamento pelo valor já pago (não só pelo status do
+ * pedido) — assim uma nota com pagamento parcial aparece como "Parcial",
+ * não como "Em aberto" cheio.
+ */
+const statusPagamentoVenda = (v: { pedido: { valorPago?: number } }, total: number): "ABERTA" | "PARCIAL" | "PAGA" => {
+  const pago = Number(v.pedido.valorPago ?? 0);
+  if (pago <= 0) return "ABERTA";
+  if (pago >= total) return "PAGA";
+  return "PARCIAL";
+};
+
+const SearchBox = ({ value, onChange, placeholder, className = "" }: { value: string; onChange: (v: string) => void; placeholder?: string; className?: string }) => (
+  <div className={`glass-subtle flex items-center gap-2 rounded-xl px-3 transition-all focus-within:border-accent/50 focus-within:shadow-glow ${className}`}>
+    <Search className="h-4 w-4 shrink-0 text-muted" />
+    <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="w-full flex-1 bg-transparent py-2 text-[13px] text-ink outline-none placeholder:text-faint" />
+  </div>
+);
+
+/**
+ * Linha da lista com botões próprios.
+ *
+ * As ações ficam FORA do botão da linha, sobrepostas à direita: botão dentro
+ * de botão é HTML inválido e, na prática, clicar em "aprovar" abriria também
+ * a nota — a pessoa pediria uma coisa e receberia outra. O vão entre os
+ * ícones continua sendo área clicável da linha.
+ */
+const LinhaAcoes = ({ children }: { children: ReactNode }) => (
+  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4">
+    <div className="pointer-events-auto flex items-center gap-1 opacity-70 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">{children}</div>
+  </div>
+);
+
+/** Botão de ícone de uma linha — alvo de 30px, com o que faz no `title`. */
+const AcaoLinha = ({
+  icon,
+  label,
+  onClick,
+  tone = "neutro",
+  ocupado = false,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+  tone?: "neutro" | "sucesso" | "aviso";
+  ocupado?: boolean;
+}) => {
+  const tons = {
+    neutro: "text-mist hover:text-ink",
+    sucesso: "text-success hover:text-success",
+    aviso: "text-warning hover:text-warning",
+  } as const;
+
+  return (
+    /* `Dica` no lugar do `title`: cinco ícones dividindo 160px precisam dizer o
+       que fazem na hora, com a tipografia do tema — não depois de um segundo,
+       na caixinha cinza do sistema operacional. */
+    <Dica texto={label}>
+      <button
+        type="button"
+        aria-label={label}
+        disabled={ocupado}
+        onClick={(ev) => {
+          ev.stopPropagation();
+          onClick();
+        }}
+        className={`focus-ring flex h-[30px] w-[30px] cursor-pointer items-center justify-center rounded-lg border border-fg/[0.08] bg-surface/90 transition-colors hover:bg-fg/[0.08] disabled:cursor-not-allowed disabled:opacity-50 ${tons[tone]}`}
+      >
+        {ocupado ? <Loader2 size={14} className="animate-spin" /> : icon}
+      </button>
+    </Dica>
+  );
+};
+
+/* --------------------------------- Página --------------------------------- */
+
+/** Vocabulário dos orçamentos — o mesmo da tela de Orçamentos. */
+const SITUACAO_ORCAMENTO: Record<string, { label: string; tom: TomSelo }> = {
+  ABERTO: { label: "Aguardando", tom: "alerta" },
+  APROVADO: { label: "Aprovado", tom: "sucesso" },
+  RECUSADO: { label: "Recusado", tom: "perigo" },
+  EXPIRADO: { label: "Expirado", tom: "neutro" },
+};
+
+const PontoDeVenda = () => {
+  const navigate = useNavigate();
+  const mobile = useIsMobile();
+  const { user } = useAuth();
+
+  const vendas = useVendaStore((s) => s.vendas);
+  const fetchVendas = useVendaStore((s) => s.fetchVendas);
+  const clientes = useClienteStore((s) => s.clientes);
+  const fetchClientes = useClienteStore((s) => s.fetchClientes);
+
+  const [novaVendaOpen, setNovaVendaOpen] = useState(false);
+  const [nomeCliente, setNomeCliente] = useState("");
+  const [busca, setBusca] = useState("");
+  const [notaAberta, setNotaAberta] = useState<NotaAberta | null>(null);
+
+  /*
+   * O dia em foco — começa em hoje, que é o que o balcão quer ver ao abrir.
+   *
+   * Substitui o par "Hoje / Este mês". Aqueles dois botões respondiam à
+   * pergunta do dia e a mais nenhuma: conferir sábado passado ou refazer o
+   * caixa de anteontem obrigava a sair do PDV. Um dia escolhível responde às
+   * três, e "hoje" continua sendo o que se vê sem clicar em nada.
+   */
+  const [dia, setDia] = useState(() => new Date());
+
+  /* Qual lista a tabela mostra. As abas do topo da página levam para telas
+     diferentes; estas trocam o conteúdo sem sair do balcão. */
+  const [aba, setAba] = useState<"vendas" | "orcamentos">("vendas");
+
+  const [orcamentos, setOrcamentos] = useState<Orcamento[]>([]);
+
+  /* Ação em andamento numa linha — trava só aquela, não a tabela inteira. */
+  const [ocupado, setOcupado] = useState<string | null>(null);
+
+  /*
+   * Download direto da linha, sem abrir a nota.
+   *
+   * Um único nó escondido fora da tela, cujo conteúdo é trocado para o
+   * documento escolhido antes de rasterizar. N notas escondidas (uma por
+   * linha) custariam o render de todas elas a cada mudança da lista.
+   */
+  const [notaDownload, setNotaDownload] = useState<PedidoClienteType | null>(null);
+  const [orcamentoDownload, setOrcamentoDownload] = useState<Orcamento | null>(null);
+  const refNotaDownload = useRef<HTMLDivElement>(null);
+  const refOrcamentoDownload = useRef<HTMLDivElement>(null);
+  const enterprise = useEnterprise((s) => s.enterprise);
+
+  /** Orçamento cujo cliente está sendo cadastrado — alimenta o `prefill`. */
+  const [clienteDoOrcamento, setClienteDoOrcamento] = useState<Orcamento | null>(null);
+
+  /* Clicar na linha mostra a proposta como o cliente a recebeu. As decisões
+     ficam nos botões: abrir para ler não pode ter efeito colateral. */
+  const [visualizando, setVisualizando] = useState<Orcamento | null>(null);
+
+  /* No celular a tela é outra e não tem esta tabela — o par de listas do dia é
+     coisa de desktop, e buscar orçamento ali seria uma requisição jogada fora. */
+  const [somenteHoje, setSomenteHoje] = useState(true);
+
+  /* Cadastros no próprio PDV: parar a venda para ir até Clientes ou Estoque e
+     voltar é o que faz o operador desistir e vender "no caderno". */
+  const [novoClienteOpen, setNovoClienteOpen] = useState(false);
+  const [novoProdutoOpen, setNovoProdutoOpen] = useState(false);
+
+  /* Orçamento volta a abrir pela nota (mesma tela, modo orçamento): um modal
+     só de nome do cliente e a nota abre com título "ORÇAMENTO", sem pagamento. */
+  const [orcamentoOpen, setOrcamentoOpen] = useState(false);
+  const [nomeOrcamento, setNomeOrcamento] = useState("");
+  const [salvandoCadastro, setSalvandoCadastro] = useState(false);
+
+  const alert = useAlert();
+  const criarCliente = useClienteStore((s) => s.criarCliente);
+
+  /** Cadastra e já abre a venda para o cliente novo — é o motivo de ter cadastrado. */
+  const handleNovoCliente = async (dados: ClienteFormData) => {
+    setSalvandoCadastro(true);
+
+    try {
+      await criarCliente(dados);
+      await fetchClientes(true);
+
+      setNovoClienteOpen(false);
+      alert.success("Cliente cadastrado!", "Agora é só lançar os produtos.");
+
+      const criado = useClienteStore.getState().clientes.find((c) => c.nome === dados.nome);
+      if (criado?.id) abrirNota({ clienteId: String(criado.id), nome: criado.nome });
+    } catch (err) {
+      alert.error(getErrorTitle(err), extractErrorMessage(err, "Não foi possível cadastrar o cliente."));
+    } finally {
+      setSalvandoCadastro(false);
+    }
+  };
+
+  const handleNovoProduto = async (dados: ProductFormData) => {
+    setSalvandoCadastro(true);
+
+    try {
+      await ProductService.create(dados);
+
+      setNovoProdutoOpen(false);
+      alert.success("Produto cadastrado!", "Ele já pode ser lançado na nota.");
+    } catch (err) {
+      alert.error(getErrorTitle(err), extractErrorMessage(err, "Não foi possível cadastrar o produto."));
+    } finally {
+      setSalvandoCadastro(false);
+    }
+  };
+
+  // async/await como no commit `altera pra async`, mas preservando o tratamento
+  // de erro: resposta vazia zera a lista em vez de manter dados antigos.
+  const carregarVendas = async () => {
+    await fetchVendas(true);
+  };
+
+  /* Falha aqui não pode derrubar o balcão: sem orçamentos a aba fica vazia e
+     as vendas seguem funcionando. */
+  const carregarOrcamentos = useCallback(async () => {
+    if (mobile) return;
+
+    try {
+      setOrcamentos(await OrcamentoService.listar());
+    } catch {
+      setOrcamentos([]);
+    }
+  }, [mobile]);
+
+  useEffect(() => {
+    fetchVendas();
+    fetchClientes();
+    carregarOrcamentos();
+  }, [fetchVendas, fetchClientes, carregarOrcamentos]);
+
+  /* O PDV é a tela mais compartilhada da loja: dois balcões abertos ao mesmo
+     tempo é o normal, não a exceção. */
+  useSincronizacao(["pedidos", "clientes", "produtos"], () => {
+    fetchVendas(true);
+    fetchClientes(true);
+    carregarOrcamentos();
+  });
+
+  /*
+   * As vendas do dia escolhido, da mais recente para a mais antiga.
+   *
+   * No celular o filtro continua sendo "hoje / este mês" — a tela de lá é uma
+   * folha corrida, sem o cabeçalho de tabela que abriga o calendário.
+   */
+  const vendasVisiveis = useMemo(() => {
+    const base = mobile
+      ? vendas.filter((v) => (somenteHoje ? noMesmoDia(v.pedido.dataPedido) : ehDesteMes(v.pedido.dataPedido)))
+      : vendas.filter((v) => noMesmoDia(v.pedido.dataPedido, dia));
+
+    return [...base].sort((a, b) => +new Date(b.pedido.dataPedido) - +new Date(a.pedido.dataPedido));
+  }, [vendas, dia, mobile, somenteHoje]);
+
+  const vendasFiltradas = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    if (!termo) return vendasVisiveis;
+    return vendasVisiveis.filter((v) => v.nomeCliente?.toLowerCase().includes(termo));
+  }, [vendasVisiveis, busca]);
+
+  /*
+   * Orçamentos: TODOS, sempre — o dia escolhido não vale aqui.
+   *
+   * Venda é do dia; proposta é do futuro. A que espera resposta há duas
+   * semanas é justamente a que precisa de um telefonema, e um filtro de data
+   * a esconderia — quem vai procurar o orçamento de 28 de julho para lembrar
+   * de cobrá-lo? Em vez de filtrar, a lista separa por data.
+   */
+  const orcamentosFiltrados = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    const base = termo
+      ? orcamentos.filter((o) => o.clienteNome?.toLowerCase().includes(termo) || String(o.codigo).includes(termo))
+      : orcamentos;
+
+    return [...base].sort((a, b) => +new Date(b.criadoEm) - +new Date(a.criadoEm));
+  }, [orcamentos, busca]);
+
+  /** Do mais recente para o mais antigo, com a data como cabeçalho do bloco. */
+  const orcamentosPorDia = useMemo(() => {
+    const mapa = new Map<string, { data: string; itens: Orcamento[]; total: number }>();
+
+    for (const o of orcamentosFiltrados) {
+      const chave = dataBr(o.criadoEm);
+      const grupo = mapa.get(chave) ?? { data: chave, itens: [], total: 0 };
+
+      grupo.itens.push(o);
+      grupo.total += Number(o.total ?? 0);
+      mapa.set(chave, grupo);
+    }
+
+    return Array.from(mapa.values());
+  }, [orcamentosFiltrados]);
+
+  /** Quantos aguardam resposta — é a contagem que muda o que se faz no dia. */
+  const aguardandoResposta = useMemo(() => orcamentos.filter((o) => o.status === "ABERTO").length, [orcamentos]);
+
+  /** "hoje", "ontem" ou "11/08" — cabe no rótulo de um KPI. */
+  const rotuloCurtoDoDia = useMemo(() => {
+    const porExtenso = diaExtenso(dia);
+
+    if (porExtenso.startsWith("Hoje")) return "hoje";
+    if (porExtenso.startsWith("Ontem")) return "ontem";
+
+    return dia.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+  }, [dia]);
+
+  const faturamento = vendasVisiveis.reduce((acc, v) => acc + totalDoPedido(v), 0);
+  const recebido = vendasVisiveis.reduce((acc, v) => acc + Number(v.pedido.valorPago ?? 0), 0);
+  const pendente = Math.max(faturamento - recebido, 0);
+  const ticketMedio = vendasVisiveis.length ? faturamento / vendasVisiveis.length : 0;
+
+  // Sem busca mostra os primeiros clientes; com busca, os que casam.
+  const listaClientes = useMemo(() => {
+    const termo = nomeCliente.trim().toLowerCase();
+    if (!termo) return clientes.slice(0, 8);
+    return clientes.filter((c) => c.nome?.toLowerCase().includes(termo)).slice(0, 8);
+  }, [clientes, nomeCliente]);
+
+  const clienteSelecionavel = useMemo(() => {
+    const termo = nomeCliente.trim().toLowerCase();
+    return clientes.find((c) => c.nome?.toLowerCase() === termo);
+  }, [clientes, nomeCliente]);
+
+  /* ---------------------- Ações da linha de orçamento ---------------------- */
+
+  /** Os itens da proposta no formato que a nota entende. */
+  const itensDoOrcamento = (o: Orcamento) =>
+    (o.itens ?? []).map((i, indice) => ({
+      itemPedidoId: `orc-${o.id}-${i.id ?? indice}`,
+      quantidadeItem: Number(i.quantidade ?? 0),
+      valorVendaItem: Number(i.valorUnitario ?? 0),
+      produto: {
+        nomeProduto: i.nomeProduto,
+        produtoId: String(i.produtoId ?? ""),
+        valorProduto: Number(i.valorUnitario ?? 0),
+      },
+    }));
+
+  const aprovarOrcamento = async (o: Orcamento) => {
+    setOcupado(o.id);
+
+    try {
+      await OrcamentoService.alterarStatus(o.id, "APROVADO");
+      setOrcamentos((prev) => prev.map((x) => (x.id === o.id ? { ...x, status: "APROVADO" } : x)));
+      alert.success("Orçamento aprovado!", "Agora é só converter em venda — o botão ao lado abre a nota com os itens.");
+    } catch (err) {
+      alert.error(getErrorTitle(err), extractErrorMessage(err, "Não foi possível aprovar o orçamento."));
+    } finally {
+      setOcupado(null);
+    }
+  };
+
+  /**
+   * O cliente da proposta, criando o cadastro se ele ainda não existir.
+   *
+   * Um orçamento pode nascer para nome livre — é o caso normal de quem pede
+   * preço no balcão sem ser cliente ainda. Na hora de converter, esse nome
+   * precisa virar cadastro, porque nota de venda é emitida PARA alguém.
+   *
+   * Antes de criar, procura pelo nome entre os já cadastrados: converter duas
+   * propostas do mesmo "João da Silva" não pode render dois Joões na base.
+   */
+  const garantirClienteDaProposta = async (o: Orcamento): Promise<string | null> => {
+    if (o.clienteId) return String(o.clienteId);
+
+    const nomeProposta = (o.clienteNome ?? "").trim();
+    const jaExiste = clientes.find((c) => c.nome?.trim().toLowerCase() === nomeProposta.toLowerCase());
+
+    if (jaExiste?.id) return String(jaExiste.id);
+
+    /* Ficha mínima: o nome e o telefone que a proposta já tem. O resto se
+       completa depois em Clientes — exigir documento aqui seria parar a venda
+       para preencher formulário. */
+    await criarCliente({
+      nome: nomeProposta,
+      status: eStatus.ATIVO,
+      contato: { whatsapp: o.clienteContato ?? "" },
+    } as unknown as ClienteFormData);
+
+    await fetchClientes(true);
+
+    const criado = useClienteStore.getState().clientes.find((c) => c.nome?.trim().toLowerCase() === nomeProposta.toLowerCase());
+
+    return criado?.id ? String(criado.id) : null;
+  };
+
+  /**
+   * Converte a proposta numa venda de verdade.
+   *
+   * A nota abre COM os itens e o cliente, e nada acontece no estoque nem no
+   * faturamento até ela ser gerada — a conversão continua sendo decisão de
+   * quem está no balcão, não efeito de clicar em "converter".
+   *
+   * O cadastro do cliente sai na frente, e sozinho: parar a conversão para
+   * pedir "cadastre antes" é interromper exatamente o momento em que o cliente
+   * disse sim. Se a proposta ainda está aberta, ela também passa a apontar
+   * para o cadastro novo.
+   */
+  const converterEmVenda = async (o: Orcamento) => {
+    if (ocupado) return;
+
+    setOcupado(o.id);
+
+    try {
+      const clienteId = await garantirClienteDaProposta(o);
+
+      if (!clienteId) {
+        alert.error("Não foi possível preparar a venda", "O cadastro do cliente não pôde ser criado. Cadastre-o em Clientes e tente de novo.");
+        return;
+      }
+
+      /* Amarra a proposta ao cadastro — senão ela seguiria "sem cadastro" na
+         lista mesmo depois de virar venda. */
+      if (!o.clienteId && o.status === "ABERTO") {
+        await OrcamentoService.atualizar(o.id, {
+          clienteNome: o.clienteNome,
+          clienteId,
+          clienteContato: o.clienteContato ?? null,
+          itens: (o.itens ?? []).map((i) => ({
+            produtoId: i.produtoId ?? null,
+            nomeProduto: i.nomeProduto,
+            quantidade: i.quantidade,
+            valorUnitario: i.valorUnitario,
+          })),
+        });
+
+        await carregarOrcamentos();
+      }
+
+      abrirNota({
+        clienteId,
+        nome: o.clienteNome,
+        itens: itensDoOrcamento(o),
+        /* Aprovar junto: quem converte já teve o "sim" do cliente, e deixar a
+           proposta como "aguardando" faria a lista mentir sobre o que falta. */
+        aprovarOrcamentoId: o.status === "APROVADO" ? undefined : o.id,
+      });
+    } catch (err) {
+      alert.error(getErrorTitle(err), extractErrorMessage(err, "Não foi possível converter o orçamento em venda."));
+    } finally {
+      setOcupado(null);
+    }
+  };
+
+  const editarOrcamento = (o: Orcamento) => {
+    if (o.status !== "ABERTO") {
+      alert.warning("Proposta já respondida", "Só dá para editar um orçamento que ainda está aguardando resposta.");
+      return;
+    }
+
+    abrirNota({ clienteId: o.clienteId ? String(o.clienteId) : undefined, nome: o.clienteNome, orcamento: true, itens: itensDoOrcamento(o), orcamentoId: o.id });
+  };
+
+  /**
+   * Cadastra o cliente da proposta e amarra os dois.
+   *
+   * O `atualizar` no fim é o que faz o orçamento deixar de ser "nome solto":
+   * sem ele, o cadastro nasceria certo e a proposta continuaria sem dono —
+   * e o botão de converter seguiria pedindo o mesmo cadastro de novo.
+   */
+  const cadastrarClienteDoOrcamento = async (dados: ClienteFormData) => {
+    const origem = clienteDoOrcamento;
+
+    setSalvandoCadastro(true);
+
+    try {
+      await criarCliente(dados);
+      await fetchClientes(true);
+
+      const criado = useClienteStore.getState().clientes.find((c) => c.nome === dados.nome);
+
+      if (origem && criado?.id && origem.status === "ABERTO") {
+        await OrcamentoService.atualizar(origem.id, {
+          clienteNome: origem.clienteNome,
+          clienteId: String(criado.id),
+          clienteContato: origem.clienteContato ?? null,
+          itens: (origem.itens ?? []).map((i) => ({
+            produtoId: i.produtoId ?? null,
+            nomeProduto: i.nomeProduto,
+            quantidade: i.quantidade,
+            valorUnitario: i.valorUnitario,
+          })),
+        });
+
+        await carregarOrcamentos();
+      }
+
+      setClienteDoOrcamento(null);
+      alert.success("Cliente cadastrado!", criado?.id ? "A proposta já está no nome dele — pode converter em venda." : "O cadastro foi criado.");
+    } catch (err) {
+      alert.error(getErrorTitle(err), extractErrorMessage(err, "Não foi possível cadastrar o cliente."));
+    } finally {
+      setSalvandoCadastro(false);
+    }
+  };
+
+  /* ------------------------------- Downloads ------------------------------- */
+
+  /**
+   * Baixa o documento da linha, no formato escolhido.
+   *
+   * Os dois servem a coisas diferentes e a loja usa os dois: o PNG vai para o
+   * WhatsApp (abre na conversa, sem baixar nada), o PDF vai para o e-mail e
+   * para a impressora. Os dois saem do MESMO PNG rasterizado — o PDF é essa
+   * imagem colada numa A4 —, então o documento é idêntico nos dois caminhos.
+   */
+  const baixarDaLinha = async (
+    formato: "png" | "pdf",
+    chave: string,
+    preparar: () => void,
+    limpar: () => void,
+    ref: React.RefObject<HTMLDivElement>,
+    nome: string,
+  ) => {
+    if (ocupado) return;
+
+    setOcupado(chave);
+    preparar();
+
+    try {
+      /* Espera o nó escondido renderizar com o documento certo antes de
+         fotografar — sem isso o arquivo sai do documento anterior, ou em
+         branco. */
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+
+      const blob = await gerarBlobNota(ref);
+
+      if (formato === "pdf") {
+        await baixarNotaPdf(blob, nome);
+      } else {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.download = `${nome}.png`;
+        link.href = url;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      alert.error(getErrorTitle(err), extractErrorMessage(err, "Não foi possível gerar o arquivo."));
+    } finally {
+      setOcupado(null);
+      limpar();
+    }
+  };
+
+  const baixarOrcamento = (o: Orcamento, formato: "png" | "pdf") =>
+    baixarDaLinha(formato, o.id, () => setOrcamentoDownload(o), () => setOrcamentoDownload(null), refOrcamentoDownload, `orcamento-${o.codigo}`);
+
+  const baixarNota = (v: PedidoClienteType, formato: "png" | "pdf") =>
+    baixarDaLinha(
+      formato,
+      String(v.pedido.pedidoId),
+      () => setNotaDownload(v),
+      () => setNotaDownload(null),
+      refNotaDownload,
+      `nota-${v.nomeCliente ? v.nomeCliente.toLowerCase().replace(/[^a-z0-9]+/g, "-") : enterprise?.nomeFantasia ?? "venda"}`,
+    );
+
+  const abrirNota = (nota: NotaAberta) => {
+    setNotaAberta(nota);
+    setNovaVendaOpen(false);
+    setNomeCliente("");
+  };
+
+  /** Abre a nota em modo orçamento, com o nome digitado — sem cadastrar. */
+  const abrirOrcamento = () => {
+    const nomeLimpo = nomeOrcamento.trim();
+
+    if (!nomeLimpo) {
+      alert.warning("Informe o nome", "O orçamento precisa saber para quem é.");
+      return;
+    }
+
+    setOrcamentoOpen(false);
+    setNomeOrcamento("");
+    abrirNota({ nome: nomeLimpo, orcamento: true });
+  };
+
+  const fecharNota = async () => {
+    const convertido = notaAberta?.aprovarOrcamentoId;
+
+    setNotaAberta(null);
+
+    /*
+     * A proposta convertida vira APROVADA aqui, e não no clique de converter.
+     *
+     * No clique, a venda ainda não existe — quem abre a nota e desiste
+     * deixaria um orçamento marcado como aceito sem nada por trás. Aqui a
+     * nota já foi gerada (é o que fecha o modal), então o "sim" do cliente
+     * virou fato.
+     */
+    if (convertido) {
+      try {
+        await OrcamentoService.alterarStatus(convertido, "APROVADO");
+      } catch {
+        /* A venda é o que importa e já está salva; a marcação pode ser feita
+           na mão pelo botão de aprovar. */
+      }
+    }
+
+    /* Recarrega os dois: a nota fechada pode ter sido venda OU orçamento, e
+       quem acabou de montar a proposta espera vê-la na aba ao fechar. */
+    carregarVendas();
+    carregarOrcamentos();
+  };
+
+  /* No celular a tela é outra — ver `PDVMobile`. A lógica acima é a mesma;
+     muda só a apresentação e os modais, que viram folhas. */
+  const resumoMobile: VendaResumo[] = vendasFiltradas.map((v) => {
+    const total = totalDoPedido(v);
+    return {
+      pedidoId: v.pedido.pedidoId,
+      clienteId: v.clienteId,
+      nomeCliente: v.nomeCliente,
+      data: v.pedido.dataPedido,
+      total,
+      pago: Number(v.pedido.valorPago ?? 0),
+      status: statusPagamentoVenda(v, total),
+    };
+  });
+
+  if (mobile) {
+    return (
+      <div className="relative h-full w-full overflow-y-auto text-ink">
+        <PDVMobile
+          nomeUsuario={user?.nome}
+          vendas={resumoMobile}
+          faturamento={faturamento}
+          recebido={recebido}
+          pendente={pendente}
+          somenteHoje={somenteHoje}
+          onPeriodo={setSomenteHoje}
+          busca={busca}
+          onBusca={setBusca}
+          onAbrirNota={(v) => abrirNota({ id: v.pedidoId, clienteId: v.clienteId, nome: v.nomeCliente })}
+          onNovaVenda={() => setNovaVendaOpen(true)}
+          onNovoOrcamento={() => setOrcamentoOpen(true)}
+        />
+
+        {/* Modal de nome do orçamento no mobile — folha. */}
+        <Sheet open={orcamentoOpen} onClose={() => setOrcamentoOpen(false)} title="Novo orçamento" subtitle="Para quem é a proposta?">
+          <div className="flex flex-col gap-3 pt-1">
+            <input
+              autoFocus
+              value={nomeOrcamento}
+              onChange={(e) => setNomeOrcamento(e.target.value)}
+              placeholder="Nome do cliente"
+              onKeyDown={(e) => e.key === "Enter" && abrirOrcamento()}
+              className="w-full rounded-xl border border-fg/[0.08] bg-fg/[0.03] px-3.5 py-3 text-[14px] text-ink outline-none focus:border-accent/60"
+            />
+            <p className="text-[11.5px] leading-relaxed text-faint">Não precisa ter cadastro. A nota abre em modo orçamento — sem pagamento.</p>
+            <button type="button" onClick={abrirOrcamento} className="min-h-[42px] rounded-xl bg-accent px-5 text-[13px] text-white transition-all hover:brightness-110 active:scale-[0.99]">
+              Montar orçamento
+            </button>
+          </div>
+        </Sheet>
+
+        {/* Escolher cliente — folha, não modal centralizado. */}
+        <Sheet open={novaVendaOpen} onClose={() => setNovaVendaOpen(false)} title="Iniciar venda" subtitle="Escolha o cliente" altura="cheia">
+          <div className="flex flex-col gap-3 pt-1">
+            <div className="flex items-center gap-2.5 rounded-2xl border border-fg/[0.08] bg-fg/[0.03] px-4 focus-within:border-accent/50">
+              <Search className="h-4 w-4 shrink-0 text-muted" />
+              <input value={nomeCliente} onChange={(e) => setNomeCliente(e.target.value)} placeholder="Buscar cliente" className="w-full flex-1 bg-transparent py-3 text-[16px] text-ink outline-none placeholder:text-faint" />
+            </div>
+
+            {listaClientes.length > 0 ? (
+              listaClientes.map((c, i) => (
+                <button
+                  key={c.id ?? i}
+                  type="button"
+                  onClick={() => c.id && abrirNota({ clienteId: String(c.id), nome: c.nome })}
+                  className="focus-ring flex min-h-[60px] items-center gap-3 border-b border-fg/[0.05] text-left active:bg-fg/[0.04]"
+                >
+                  <Avatar name={c.nome} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[14.5px] text-ink">{c.nome}</span>
+                    {c.cpfCnpj && <span className="block truncate text-[12px] text-faint">{formatDocument(c.cpfCnpj)}</span>}
+                  </span>
+                  <ChevronRight size={16} className="shrink-0 text-muted" />
+                </button>
+              ))
+            ) : (
+              <div className="flex flex-col items-center gap-3 py-12 text-center">
+                <p className="text-[14px] text-ink">{nomeCliente.trim() ? "Nenhum cliente encontrado" : "Nenhum cliente cadastrado"}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNovaVendaOpen(false);
+                    navigate("/clientes");
+                  }}
+                  className="focus-ring min-h-[44px] rounded-2xl bg-accent px-5 text-[14px] text-white"
+                >
+                  Ir para Clientes
+                </button>
+              </div>
+            )}
+          </div>
+        </Sheet>
+
+        {/* A nota ocupa a tela inteira: é onde a venda (ou o orçamento) acontece. */}
+        <Sheet open={!!notaAberta} onClose={fecharNota} title={notaAberta?.orcamento ? "Novo orçamento" : notaAberta?.id ? "Venda" : "Nova venda"} subtitle={notaAberta?.nome} altura="cheia">
+          {notaAberta && <Invoice id={notaAberta.id} clienteId={notaAberta.clienteId} nome={notaAberta.nome} onSaved={fecharNota} modoOrcamento={notaAberta.orcamento} itensIniciais={notaAberta.itens} orcamentoId={notaAberta.orcamentoId} />}
+        </Sheet>
+      </div>
+    );
+  }
+
+  return (
+    <PageScreen icon={<ShoppingCart className="h-5 w-5" />} title="Ponto de Venda" subtitle="Registre vendas e monte orçamentos">
+        {/*
+          KPIs do dia escolhido — o rótulo diz qual.
+
+          Sem isso, quem foi conferir sábado passado volta o olho para o topo e
+          lê "Faturamento" achando que é o de hoje. O número mudou junto com a
+          lista; o rótulo precisa contar isso.
+        */}
+        <div className="stagger grid shrink-0 grid-cols-2 gap-3 lg:grid-cols-4">
+          <Kpi icon={<DollarSign size={16} />} label={`Faturamento · ${rotuloCurtoDoDia}`} value={formatCurrency(faturamento)} tone="accent" />
+          <Kpi icon={<Wallet size={16} />} label="Recebido" value={formatCurrency(recebido)} tone="success" />
+          <Kpi icon={<AlertCircle size={16} />} label="Pendente" value={formatCurrency(pendente)} tone="warning" />
+          <Kpi icon={<Hash size={16} />} label="Vendas" value={String(vendasVisiveis.length)} tone="neutral" />
+        </div>
+
+        {/* Card da lista */}
+        <div className="card glass-sheen flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {/*
+           * Cabeçalho da tabela — tudo o que a tela faz mora aqui.
+           *
+           * Os quatro botões de criar estavam acima, numa faixa própria, e os
+           * filtros aqui embaixo: duas barras de controle empilhadas antes de
+           * qualquer conteúdo, e uma delas ficava longe da lista que ela
+           * comanda. Juntos, o cabeçalho vira o painel do balcão — o que ver
+           * (aba e dia), o que procurar (busca) e o que criar (as quatro
+           * ações) — e a tabela ganha a altura das duas faixas antigas.
+           */}
+          <div className="flex shrink-0 flex-col gap-3 border-b border-fg/[0.07] px-4 py-3">
+            {/* Linha 1: o que a tabela mostra · o que se pode criar */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="glass-subtle flex items-center gap-1 rounded-xl p-1">
+                {([
+                  { id: "vendas", label: "Vendas", icone: <Receipt size={14} />, total: vendasVisiveis.length },
+                  { id: "orcamentos", label: "Orçamentos", icone: <FileText size={14} />, total: orcamentos.length },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setAba(opt.id)}
+                    aria-pressed={aba === opt.id}
+                    className={`focus-ring flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] transition-colors ${
+                      aba === opt.id ? "bg-accent text-white shadow-glow" : "text-mist hover:text-ink"
+                    }`}
+                  >
+                    {opt.icone}
+                    {opt.label}
+                    {/* A contagem na própria aba: saber que existem três
+                        orçamentos no dia é metade do motivo de trocar de aba. */}
+                    <span className={`tabular-nums ${aba === opt.id ? "text-white/70" : "text-faint"}`}>{opt.total}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <GhostAction icon={<UserPlus size={15} />} onClick={() => setNovoClienteOpen(true)}>
+                  Novo cliente
+                </GhostAction>
+                <GhostAction icon={<PackagePlus size={15} />} onClick={() => setNovoProdutoOpen(true)}>
+                  Novo produto
+                </GhostAction>
+                {/* Cor diferente de propósito: orçamento não é venda, e dois botões
+                    iguais lado a lado fariam o operador clicar no errado com pressa. */}
+                <button
+                  type="button"
+                  onClick={() => setOrcamentoOpen(true)}
+                  className="focus-ring flex h-[38px] cursor-pointer items-center gap-1.5 rounded-xl border border-warning/40 bg-warning/[0.12] px-3.5 text-[12.5px] text-warning transition-colors hover:bg-warning/20"
+                >
+                  <FileText className="h-4 w-4" />
+                  Novo orçamento
+                </button>
+
+                <PrimaryAction icon={<Plus className="h-4 w-4" />} onClick={() => setNovaVendaOpen(true)}>
+                  Nova venda
+                </PrimaryAction>
+              </div>
+            </div>
+
+            {/* Linha 2: de que dia · procurando o quê */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <SearchBox
+                value={busca}
+                onChange={setBusca}
+                placeholder={aba === "vendas" ? "Buscar venda por cliente…" : "Buscar orçamento por cliente ou código…"}
+                className="min-w-[200px] flex-1 sm:max-w-xs"
+              />
+
+              {/* O calendário vale para as vendas. Orçamento não é do dia: a
+                  proposta parada há duas semanas é justamente a que precisa de
+                  telefonema, e escondê-la atrás de uma data seria perder a
+                  única lista que a mostra. */}
+              {aba === "vendas" && <SeletorDia valor={dia} onChange={setDia} />}
+
+              {aba === "orcamentos" && aguardandoResposta > 0 && (
+                <span className="flex items-center gap-1.5 rounded-xl border border-warning/30 bg-warning/[0.1] px-3 py-2 text-[12px] text-warning">
+                  <FileText size={13} />
+                  {aguardandoResposta} {aguardandoResposta === 1 ? "aguardando resposta" : "aguardando resposta"}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/*
+            Corpo — vendas do dia numa lista corrida; orçamentos, todos,
+            separados por data.
+
+            O agrupamento saiu das vendas porque a lista traz um dia só: o
+            cabeçalho repetiria em cada bloco a data que já está escrita por
+            extenso no seletor. Nos orçamentos ele volta pelo motivo inverso —
+            a lista atravessa semanas, e sem a data cada linha vira "quando
+            mesmo foi essa proposta?".
+          */}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {aba === "vendas" ? (
+              vendasFiltradas.length > 0 ? (
+                vendasFiltradas.map((venda) => {
+                  const total = totalDoPedido(venda);
+                  const statusPag = statusPagamentoVenda(venda, total);
+                  const pagoVenda = Number(venda.pedido.valorPago ?? 0);
+
+                  return (
+                    <div key={venda.pedido.pedidoId} className="group relative">
+                      <button
+                        onClick={() => abrirNota({ id: venda.pedido.pedidoId, clienteId: venda.clienteId, nome: venda.nomeCliente })}
+                        className="relative flex w-full items-center gap-3 border-b border-fg/[0.04] px-5 py-3.5 text-left transition-colors before:absolute before:left-0 before:top-0 before:h-full before:w-[3px] before:rounded-r before:bg-accent before:opacity-0 before:transition-opacity hover:bg-fg/[0.03] hover:before:opacity-100"
+                      >
+                        <Avatar name={venda.nomeCliente} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[13px] text-ink">{venda.nomeCliente}</p>
+                          <p className="text-[11px] text-faint">
+                            {horaVenda(venda.pedido.dataPedido)}
+                            {statusPag === "PARCIAL" && ` · pago ${formatCurrency(pagoVenda)} de ${formatCurrency(total)}`}
+                          </p>
+                        </div>
+
+                        <span className="hidden sm:block">
+                          <StatusBadge status={statusPag} />
+                        </span>
+
+                        <div className="text-right">
+                          <p className="text-[13px] tabular-nums text-ink">{formatCurrency(total)}</p>
+                          <p className={`text-[11px] tabular-nums ${statusPag === "PAGA" ? "text-success" : statusPag === "PARCIAL" ? "text-accent-soft" : "text-warning"}`}>{statusPag === "PAGA" ? "paga" : statusPag === "PARCIAL" ? "parcial" : "aberta"}</p>
+                        </div>
+
+                        {/* Espaço para os botões sobrepostos não taparem o valor. */}
+                        <span className="w-[38px] shrink-0" />
+                      </button>
+
+                      {/* A nota em PDF sem abrir a nota: é o pedido que mais
+                          chega no balcão ("me manda a nota"), e atravessar o
+                          modal para responder custava quatro cliques. */}
+                      <LinhaAcoes>
+                        <MenuFormatoDownload
+                          label="Baixar nota"
+                          ocupado={ocupado === String(venda.pedido.pedidoId)}
+                          onEscolher={(formato) => void baixarNota(venda, formato)}
+                        />
+                      </LinhaAcoes>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="flex h-full items-center justify-center py-10">
+                  <div className="flex max-w-xs flex-col items-center gap-3 text-center text-faint">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-fg/[0.06] bg-fg/[0.03]">
+                      <Receipt className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <p className="text-[13px] text-mist">{busca.trim() ? "Nenhuma venda encontrada" : `Nenhuma venda em ${diaExtenso(dia).toLowerCase()}`}</p>
+                      <p className="mt-0.5 text-[11px]">{busca.trim() ? "Tente buscar por outro cliente." : "Escolha outro dia no calendário ou comece uma venda."}</p>
+                    </div>
+                    {!busca.trim() && (
+                      <button onClick={() => setNovaVendaOpen(true)} className="mt-1 cursor-pointer rounded-xl bg-accent px-3.5 py-2 text-[12px] text-white transition-colors hover:bg-accent">
+                        Nova venda
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            ) : orcamentosPorDia.length > 0 ? (
+              orcamentosPorDia.map((grupo) => (
+                <section key={grupo.data}>
+                  {/* A data gruda no topo enquanto o bloco rola: numa lista que
+                      atravessa semanas, saber de quando é a proposta que está
+                      na tela é metade da informação. */}
+                  <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-fg/[0.06] bg-surface/95 px-5 py-2 backdrop-blur-sm">
+                    <span className="flex items-center gap-2 text-[11.5px] text-mist">
+                      <CalendarDays size={13} className="text-warning" />
+                      <span>{grupo.data}</span>
+                      <span className="text-faint">
+                        · {grupo.itens.length} {grupo.itens.length === 1 ? "proposta" : "propostas"}
+                      </span>
+                    </span>
+
+                    <span className="text-[12px] tabular-nums text-mist">{formatCurrency(grupo.total)}</span>
+                  </div>
+
+                  {grupo.itens.map((o) => {
+                    const situacao = SITUACAO_ORCAMENTO[o.status] ?? SITUACAO_ORCAMENTO.ABERTO;
+                    const nesteMomento = ocupado === o.id;
+
+                    return (
+                      <div key={o.id} className="group relative">
+                        <button
+                          onClick={() => setVisualizando(o)}
+                          title="Ver a proposta"
+                          className="relative flex w-full items-center gap-3 border-b border-fg/[0.04] px-5 py-3.5 text-left transition-colors before:absolute before:left-0 before:top-0 before:h-full before:w-[3px] before:rounded-r before:bg-warning before:opacity-0 before:transition-opacity hover:bg-fg/[0.03] hover:before:opacity-100"
+                        >
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-warning/25 bg-warning/[0.12] text-[11px] tabular-nums text-warning">
+                            #{o.codigo}
+                          </span>
+
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[13px] text-ink">
+                              {o.clienteNome}
+                              {/* Sem cadastro é o que trava a conversão — dizer
+                                  isso na linha evita descobrir no clique. */}
+                              {!o.clienteId && <span className="ml-2 text-[10.5px] uppercase tracking-wider text-faint">sem cadastro</span>}
+                            </p>
+                            <p className="text-[11px] text-faint">
+                              {horaVenda(o.criadoEm)} · {o.itens?.length ?? 0} {(o.itens?.length ?? 0) === 1 ? "item" : "itens"}
+                            </p>
+                          </div>
+
+                          <span className="hidden lg:block">
+                            <Selo tom={situacao.tom}>{situacao.label}</Selo>
+                          </span>
+
+                          <p className="text-right text-[13px] tabular-nums text-ink">{formatCurrency(o.total)}</p>
+
+                          {/* Reserva a faixa dos botões sobrepostos. */}
+                          <span className="w-[128px] shrink-0 sm:w-[160px]" />
+                        </button>
+
+                        {/*
+                         * Tudo o que se faz com uma proposta, na própria linha.
+                         *
+                         * A ordem segue a conversa real: o cliente responde
+                         * (aprovar), fecha (converter), aí falta o cadastro,
+                         * o documento e a correção. Cada botão some quando não
+                         * cabe — aprovar num orçamento já aprovado e editar um
+                         * já respondido seriam portas que não abrem.
+                         */}
+                        <LinhaAcoes>
+                          {o.status !== "APROVADO" && (
+                            <AcaoLinha icon={<Check size={14} />} label="Cliente aprovou" tone="sucesso" ocupado={nesteMomento} onClick={() => void aprovarOrcamento(o)} />
+                          )}
+
+                          <AcaoLinha
+                            icon={<ShoppingCart size={14} />}
+                            label="Converter em venda"
+                            tone="aviso"
+                            ocupado={nesteMomento}
+                            onClick={() => void converterEmVenda(o)}
+                          />
+
+                          {!o.clienteId && (
+                            <AcaoLinha icon={<UserPlus size={14} />} label="Cadastrar cliente" onClick={() => setClienteDoOrcamento(o)} />
+                          )}
+
+                          {o.status === "ABERTO" && (
+                            <AcaoLinha icon={<Pencil size={14} />} label="Editar" onClick={() => editarOrcamento(o)} />
+                          )}
+
+                          <MenuFormatoDownload label="Baixar" ocupado={nesteMomento} onEscolher={(formato) => void baixarOrcamento(o, formato)} />
+                        </LinhaAcoes>
+                      </div>
+                    );
+                  })}
+                </section>
+              ))
+            ) : (
+              <div className="flex h-full items-center justify-center py-10">
+                <div className="flex max-w-xs flex-col items-center gap-3 text-center text-faint">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-fg/[0.06] bg-fg/[0.03]">
+                    <FileText className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <p className="text-[13px] text-mist">{busca.trim() ? "Nenhum orçamento encontrado" : "Nenhum orçamento ainda"}</p>
+                    <p className="mt-0.5 text-[11px]">{busca.trim() ? "Tente outro nome ou código." : "Monte uma proposta: escolha os produtos e clique em “Gerar orçamento”."}</p>
+                  </div>
+                  {!busca.trim() && (
+                    <button onClick={() => setOrcamentoOpen(true)} className="mt-1 cursor-pointer rounded-xl border border-warning/40 bg-warning/[0.12] px-3.5 py-2 text-[12px] text-warning transition-colors hover:bg-warning/20">
+                      Novo orçamento
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Rodapé do card — o resumo acompanha a aba aberta. Ticket médio de
+              venda embaixo de uma lista de orçamentos seria número de outra
+              conta, e proposta somada parece faturamento sem ser. */}
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-fg/[0.06] px-5 py-2.5">
+            {aba === "vendas" ? (
+              <>
+                <p className="flex items-center gap-2 text-[12px] text-faint">
+                  <TrendingUp size={14} className="text-accent-soft" />
+                  Ticket médio: <span className="nums text-ink">{formatCurrency(ticketMedio)}</span>
+                </p>
+                <p className="text-[12px] text-faint">
+                  <span className="nums text-success">{vendasVisiveis.filter((v) => !estaAberta(v)).length}</span> pagas · <span className="nums text-warning">{vendasVisiveis.filter(estaAberta).length}</span> em aberto
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="flex items-center gap-2 text-[12px] text-faint">
+                  <FileText size={14} className="text-warning" />
+                  {orcamentos.length} {orcamentos.length === 1 ? "proposta no total" : "propostas no total"}
+                </p>
+                <p className="text-[12px] text-faint">
+                  <span className="nums text-warning">{aguardandoResposta}</span> aguardando ·{" "}
+                  <span className="nums text-success">{orcamentos.filter((o) => o.status === "APROVADO").length}</span> aprovados
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      
+
+      {/* Modal — nova venda */}
+      <Modal open={novaVendaOpen} onClose={() => setNovaVendaOpen(false)} title="Iniciar venda" subtitle="Escolha o cliente para abrir a nota" size="md">
+        <div className="flex flex-col gap-3">
+          <SearchBox value={nomeCliente} onChange={setNomeCliente} placeholder="Buscar cliente por nome…" />
+
+          {/* Lista de clientes: mostra os recentes quando ainda não há busca,
+ em vez de deixar o modal vazio esperando digitação. */}
+          <div className="flex max-h-[46vh] min-h-[180px] flex-col gap-1.5 overflow-y-auto">
+            {listaClientes.length > 0 ? (
+              listaClientes.map((c, i) => {
+                const selecionado = clienteSelecionavel?.id && String(clienteSelecionavel.id) === String(c.id);
+                return (
+                  <button
+                    key={c.id ?? i}
+                    onClick={() => c.id && abrirNota({ clienteId: String(c.id), nome: c.nome })}
+                    className={`focus-ring group flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all ${selecionado ? "border border-accent/50 bg-accent/10" : "glass-subtle hover:border-accent/30"}`}
+                  >
+                    <Avatar name={c.nome} size="sm" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] text-ink">{c.nome}</span>
+                      {c.cpfCnpj && <span className="block truncate text-[11px] text-faint">{formatDocument(c.cpfCnpj)}</span>}
+                    </span>
+                    <ChevronRight size={15} className="shrink-0 text-muted transition-colors group-hover:text-accent-soft" />
+                  </button>
+                );
+              })
+            ) : (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2.5 py-8 text-center">
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-warning/15 text-warning ring-1 ring-inset ring-warning/25">
+                  <UserCheck size={20} />
+                </span>
+                <p className="text-[13px] text-ink">{nomeCliente.trim() ? "Nenhum cliente encontrado" : "Nenhum cliente cadastrado"}</p>
+                <p className="max-w-[240px] text-[11.5px] leading-relaxed text-faint">{nomeCliente.trim() ? "Confira o nome ou cadastre este cliente antes de iniciar a venda." : "Cadastre um cliente para poder abrir notas."}</p>
+                <button
+                  onClick={() => {
+                    setNovaVendaOpen(false);
+                    navigate("/clientes");
+                  }}
+                  className="focus-ring mt-1 cursor-pointer rounded-xl bg-accent px-3.5 py-2 text-[12px] text-white transition-all hover:brightness-110"
+                >
+                  Ir para Clientes
+                </button>
+              </div>
+            )}
+          </div>
+
+          <p className="text-center text-[11px] text-faint">{listaClientes.length > 0 && `${listaClientes.length} ${listaClientes.length === 1 ? "cliente" : "clientes"} · clique para abrir a nota`}</p>
+        </div>
+      </Modal>
+
+      {/* Modal — nota do PDV (venda ou orçamento). */}
+      <Modal
+        open={!!notaAberta}
+        onClose={fecharNota}
+        title={notaAberta?.orcamentoId ? "Editar orçamento" : notaAberta?.orcamento ? "Novo orçamento" : notaAberta?.aprovarOrcamentoId ? "Converter orçamento em venda" : notaAberta?.id ? "Venda" : "Nova venda"}
+        subtitle={notaAberta?.nome}
+        size="full"
+      >
+        {notaAberta && <Invoice id={notaAberta.id} clienteId={notaAberta.clienteId} nome={notaAberta.nome} onSaved={fecharNota} modoOrcamento={notaAberta.orcamento} itensIniciais={notaAberta.itens} orcamentoId={notaAberta.orcamentoId} />}
+      </Modal>
+
+      {/* Modal de nome do orçamento no desktop. */}
+      <Modal open={orcamentoOpen} onClose={() => setOrcamentoOpen(false)} title="Novo orçamento" subtitle="Para quem é a proposta?" size="sm">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            abrirOrcamento();
+          }}
+          className="flex flex-col gap-4"
+        >
+          <div>
+            <label className="mb-1.5 block text-[11px] uppercase tracking-[0.08em] text-faint">Nome do cliente</label>
+            <input
+              autoFocus
+              value={nomeOrcamento}
+              onChange={(e) => setNomeOrcamento(e.target.value)}
+              placeholder="Digite qualquer nome"
+              className="w-full rounded-xl border border-fg/[0.08] bg-fg/[0.03] px-3.5 py-3 text-[14px] text-ink outline-none focus:border-accent/60"
+            />
+            <p className="mt-1.5 text-[11.5px] leading-relaxed text-faint">Não precisa ter cadastro. A nota abre em modo orçamento — sem pagamento.</p>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setOrcamentoOpen(false)} className="min-h-[42px] rounded-xl border border-fg/[0.1] px-4 text-[13px] text-mist transition-colors hover:text-ink">
+              Cancelar
+            </button>
+            <button type="submit" className="min-h-[42px] rounded-xl bg-accent px-5 text-[13px] text-white transition-all hover:brightness-110 active:scale-[0.99]">
+              Montar orçamento
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+        {/* Cadastros sem sair da tela — as rotas são as mesmas de Clientes e Estoque. */}
+        {/* Sem `Modal` em volta: o `ClienteForm` já abre no `Modal` do sistema.
+            Envolvê-lo empilhava dois fundos escuros e dois cartões, que era o
+            "bugado" — a caixa aparecia dentro de outra caixa. */}
+        {novoClienteOpen && <ClienteForm saving={salvandoCadastro} onClose={() => setNovoClienteOpen(false)} onSubmit={handleNovoCliente} />}
+
+        <Modal open={novoProdutoOpen} onClose={() => setNovoProdutoOpen(false)} title="Novo produto" subtitle="Ele fica disponível na nota na hora">
+          <ProdutoForm submitText={salvandoCadastro ? "Salvando..." : "Cadastrar produto"} onCancel={() => setNovoProdutoOpen(false)} onSubmit={handleNovoProduto} />
+        </Modal>
+
+        {/* Leitura da proposta — o mesmo documento que o cliente recebeu. */}
+        <Modal
+          open={!!visualizando}
+          onClose={() => setVisualizando(null)}
+          title="Orçamento"
+          subtitle={visualizando ? `#${visualizando.codigo} · ${visualizando.clienteNome}` : ""}
+          size="xl"
+        >
+          {visualizando && (
+            <div className="overflow-hidden rounded-lg border border-fg/[0.06]">
+              <OrcamentoNota orcamento={visualizando} />
+            </div>
+          )}
+        </Modal>
+
+        {/* Cadastro do cliente de uma proposta: o nome e o telefone já vêm
+            escritos, e ao salvar o orçamento passa a apontar para o cadastro. */}
+        {clienteDoOrcamento && (
+          <ClienteForm
+            prefill={{
+              nome: clienteDoOrcamento.clienteNome,
+              contato: { whatsapp: clienteDoOrcamento.clienteContato ?? "" },
+            }}
+            saving={salvandoCadastro}
+            onClose={() => setClienteDoOrcamento(null)}
+            onSubmit={cadastrarClienteDoOrcamento}
+          />
+        )}
+
+        {/*
+          Os nós que viram PDF.
+
+          Ficam fora da tela (à esquerda), nunca com `display: none`: o
+          `html-to-image` precisa do nó realmente renderizado para fotografar.
+          São dois, e não um por linha — o conteúdo é trocado para o documento
+          escolhido no instante do clique.
+        */}
+        <NotaEscondida venda={notaDownload} refNota={refNotaDownload} />
+
+        <div className="fixed -left-[9999px] top-0 w-[900px]" aria-hidden>
+          {orcamentoDownload && <OrcamentoNota orcamento={orcamentoDownload} refNota={refOrcamentoDownload} />}
+        </div>
+
+    </PageScreen>
+  );
+};
+
+/** A nota fora da tela, pronta para virar imagem — igual à de Vendas. */
+function NotaEscondida({ venda, refNota }: { venda: PedidoClienteType | null; refNota: LegacyRef<HTMLDivElement> }) {
+  return (
+    <div className="fixed -left-[9999px] top-0 w-[900px]" aria-hidden>
+      {venda && <NotaResumo venda={venda} refNota={refNota} />}
+    </div>
+  );
+}
+
+export default PontoDeVenda;

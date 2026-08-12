@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" href="/favicon2.png" />
+
+    <!-- Sem `maximum-scale`: limitar o zoom quebra a acessibilidade de quem
+         precisa ampliar. `viewport-fit=cover` mantém o app sob o notch. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+    <!-- Era #0f172a, que não existia em nenhuma paleta. Agora bate com o
+         background_color do manifest, e o useTheme reescreve na troca de tema. -->
+    <meta name="theme-color" content="#0e0d1a" />
+
+    <meta name="description" content="Sistema de gestão para o seu negócio: PDV, estoque, clientes e financeiro." />
+
+    <!-- iOS: sem estas quatro linhas o app instalado na tela de início abre
+         com a barra do Safari e um ícone genérico. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="CodeEx Flow" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <title>CodeEx Flow</title>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

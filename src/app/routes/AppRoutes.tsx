@@ -1,0 +1,279 @@
+import { BrowserRouter, Routes, Route, useLocation, Navigate } from "react-router-dom";
+import { useEffect } from "react";
+
+import useAuth from "@/features/auth/store/auth.store";
+import useEnterprise from "@/features/empresa/store/enterprise.store";
+
+import Main from "@/app/layouts/MainLayout";
+import LoadingScreen from "@/shared/ui/LoadingScreen";
+import NotFoundPage from "@/shared/ui/NotFoundPage";
+import useTheme from "@/shared/theme/useTheme";
+import { useIsMobile } from "@/shared/hooks/useIsMobile";
+
+import LandingPage from "@/features/landing/pages/LandingPage";
+
+import DashboardPage from "@/features/dashboard/pages/DashboardPage";
+import FinanceiroPage from "@/features/financeiro/pages/FinanceiroPage";
+import RelatoriosPage from "@/features/relatorios/pages/RelatoriosPage";
+
+import AuthPage from "@/features/auth/pages/LoginPage";
+import CadastroEmpresaPage from "@/features/auth/pages/SignUpPage";
+import BoasVindasPage from "@/features/auth/pages/BoasVindasPage";
+
+import usePlano from "@/shared/plano/plano.store";
+import useCatalogo from "@/shared/plano/catalogo.store";
+import RecursoDoPlano from "@/shared/plano/RecursoDoPlano";
+
+import Workflow from "@/features/vendas/pages/PDVPage";
+import SalesPage from "@/features/vendas/pages/SalesPage";
+import SalesOverviewPage from "@/features/vendas/pages/SalesOverviewPage";
+import SalesList from "@/features/vendas/pages/SalesListPage";
+import FuncionariosPage from "@/features/funcionarios/pages/FuncionariosPage";
+import OrcamentosPage from "@/features/orcamentos/pages/OrcamentosPage";
+import AjudaPage from "@/features/ajuda/pages/AjudaPage";
+import PlanilhasPage from "@/features/planilhas/pages/PlanilhasPage";
+import { ehGestor } from "@/features/vendas/components/TabsVendas";
+
+import CheckoutPage from "@/features/checkout/pages/CheckoutPage";
+import PlanosPage from "@/features/assinatura/pages/PlanosPage";
+
+import CorreiosPage from "@/features/correios/pages/CorreiosPage";
+import PrecosPrazosPage from "@/features/correios/pages/PrecosPrazosPage";
+import PostagemPage from "@/features/correios/pages/PostagemPage";
+import RastrearPage from "@/features/correios/pages/RastrearPage";
+
+import ClientesPage from "@/features/clientes/pages/ClientesPage";
+import CustomerDetailPage from "@/features/clientes/pages/ClienteDetailPage";
+
+import TableStock from "@/features/estoque/pages/StockPage";
+
+import ConfiguracoesPage from "@/features/config/pages/ConfigPage";
+import EmpresaPage from "@/features/config/pages/EmpresaPage";
+import ProfilePage from "@/features/config/pages/ProfilePage";
+import AparenciaTab from "@/features/config/pages/AparenciaPage";
+
+const PUBLIC_PATHS = ["/login", "/cadastro", "/planos", "/page"];
+
+/**
+ * No celular a tela de carregamento não aparece: ela competia com a animação
+ * de login e virava um piscar de spinner entre o "Bem-vindo" e o sistema.
+ * No lugar entra o fundo liso — a transição cobre o intervalo.
+ */
+const Espera = ({ mobile }: { mobile: boolean }) => (mobile ? <div className="h-[100dvh] w-full bg-canvas" /> : <LoadingScreen />);
+
+function AppRoutesContent({ isLogged, mobile }: { isLogged: boolean; mobile: boolean }) {
+  const location = useLocation();
+  const { enterprise } = useEnterprise();
+  const { user } = useAuth();
+  const path = location.pathname;
+  const isPublic = PUBLIC_PATHS.includes(path);
+
+  const carregarPlano = usePlano((s) => s.carregar);
+  const limparPlano = usePlano((s) => s.limpar);
+  const carregarCatalogo = useCatalogo((s) => s.carregar);
+
+  /*
+   * O catálogo é buscado no boot, antes de qualquer tela pedir.
+   *
+   * A rota é pública, então isso vale também para quem ainda não entrou — que
+   * é justamente quem vai ao cadastro. Quando a etapa do plano abre, o cartão
+   * já está lá: nada de spinner nem de layout pulando quando a lista chega.
+   */
+  useEffect(() => {
+    carregarCatalogo();
+  }, [carregarCatalogo]);
+
+  /*
+   * O plano é buscado uma vez, quando a empresa ativa entra.
+   *
+   * Não é controle de acesso — é o que decide menu visível e módulo aberto,
+   * para a pessoa não bater numa porta que o plano dela não abre. Enquanto
+   * não chega, a interface fica inteira: esconder primeiro e mostrar depois
+   * faria o menu piscar a cada navegação.
+   */
+  useEffect(() => {
+    if (isLogged && user?.ativo) carregarPlano();
+    else limparPlano();
+  }, [isLogged, user?.ativo, carregarPlano, limparPlano]);
+
+  if (!isLogged && !isPublic) {
+    return <Navigate to="/login" replace />;
+  }
+
+  // Usuário inativo (sem pagamento) → só o checkout e a tela que o leva ao
+  // WhatsApp. `/bem-vindo` precisa estar aqui: ela aparece logo depois do
+  // cadastro, quando a empresa é, por definição, inativa — sem esta exceção
+  // o cadastro cairia direto no Pix, que é justamente o que ele deixou de
+  // fazer.
+  if (isLogged && user && !user.ativo) {
+    if (path === "/bem-vindo") return <BoasVindasPage />;
+
+    if (path !== "/checkout") {
+      return <Navigate to="/checkout" replace />;
+    }
+    // Não carrega MainLayout — renderiza checkout sem sidebar
+    return <CheckoutPage />;
+  }
+
+  if (isLogged && !enterprise) {
+    return <Espera mobile={mobile} />;
+  }
+
+  if (isLogged && user?.ativo && (path === "/checkout" || path === "/login")) {
+    return <Navigate to="/" replace />;
+  }
+
+  // O funcionário opera a loja inteira. O que é do dono são duas coisas: o
+  // cadastro da empresa (com a assinatura e as faturas) e a gestão de quem tem
+  // acesso. O resto — PDV, estoque, clientes, vendas, financeiro, relatórios —
+  // é trabalho do dia e fica aberto.
+  //
+  // A lista é de bloqueio, não de liberação: tela nova nasce acessível, e
+  // esquecer de incluí-la aqui não tranca ninguém para fora do próprio serviço.
+  // Esconder do menu não basta — digitar a rota na mão não pode abrir a tela.
+  if (isLogged && user?.ativo && !ehGestor(user)) {
+    const soDoDono =
+      path.startsWith("/configuracoes/empresa") ||
+      path.startsWith("/configuracoes/faturas") ||
+      path.startsWith("/funcionarios") ||
+      /* Caixa e contas a receber são do dono — esconder do menu não basta. */
+      path.startsWith("/vendas/financeiro");
+
+    if (soDoDono) return <Navigate to="/" replace />;
+  }
+
+  return (
+    <Routes>
+      <Route path="/login" element={<AuthPage />} />
+      <Route path="/cadastro" element={<CadastroEmpresaPage />} />
+      <Route path="/planos" element={<PlanosPage />} />
+      <Route path="/bem-vindo" element={<BoasVindasPage />} />
+      <Route path="/page" element={<LandingPage />} />
+
+      {isLogged && (
+        <Route path="/" element={<Main />}>
+          {/* Dashboard é a home; o PDV passou a ter rota própria. */}
+          <Route index element={<DashboardPage />} />
+          <Route path="pdv" element={<Workflow />} />
+          {/* Orçamento é ato de balcão: mora ao lado do PDV, não em Vendas. */}
+          {/* Orçamento, produção e planilhas ficam SEM trava de plano por
+              enquanto: os três já são configuráveis e o pacote comercial
+              ainda vai ser reorganizado. Travar agora só criaria porta para
+              destrancar depois. */}
+          <Route path="pdv/orcamentos" element={<OrcamentosPage />} />
+
+          <Route path="checkout" element={<CheckoutPage />} />
+
+          <Route path="clientes" element={<ClientesPage />} />
+          <Route path="clientes/:clienteId" element={<CustomerDetailPage />} />
+
+          <Route path="estoque" element={<TableStock />} />
+
+          {/* Vendas e Financeiro viraram uma tela só, em abas. A rota antiga
+              continua respondendo para não quebrar link salvo ou atalho. */}
+          <Route path="financeiro" element={<Navigate to="/vendas/financeiro" replace />} />
+          <Route path="vendas/orcamentos" element={<Navigate to="/pdv/orcamentos" replace />} />
+
+          <Route path="funcionarios" element={<FuncionariosPage />} />
+
+          {/* Módulos que dependem do plano. O `RecursoDoPlano` mostra a
+              oferta no lugar da tela — não redireciona: quem clicou em
+              "Correios" quer Correios, e voltar para a home não responde
+              nada. Quem barra de verdade é o `planoMiddleware` da API. */}
+          <Route
+            path="correios"
+            element={
+              <RecursoDoPlano
+                recurso="correios"
+                promessa="Calcule frete, gere etiqueta, poste e rastreie sem sair do sistema — e sem redigitar endereço no site dos Correios."
+              >
+                <CorreiosPage />
+              </RecursoDoPlano>
+            }
+          >
+            <Route index element={<PrecosPrazosPage />} />
+            <Route path="postagem" element={<PostagemPage />} />
+            <Route path="rastrear" element={<RastrearPage />} />
+            <Route path="*" element={<NotFoundPage />} />
+          </Route>
+
+          <Route
+            path="relatorios"
+            element={
+              <RecursoDoPlano
+                recurso="relatorios"
+                promessa="Veja o que vende, quem vende e o que encalhou — com número, não com impressão."
+              >
+                <RelatoriosPage />
+              </RecursoDoPlano>
+            }
+          />
+          {/* O quadro de etapas volta ao ar como parte do CRM. No menu ele se
+              chama "Acompanhamento": o que anda de coluna em coluna ali é o
+              cliente, não o produto. A rota antiga fica de pé para não quebrar
+              link salvo. */}
+          {/* O quadro de etapas saiu do menu: a produção inteira é
+              controlada pela planilha. A rota redireciona em vez de sumir
+              para não quebrar link salvo — e o código da tela fica de pé,
+              caso a visão em quadro volte como opção da planilha. */}
+          <Route path="producao" element={<Navigate to="/planilhas" replace />} />
+          <Route path="planilhas" element={<PlanilhasPage />} />
+          <Route path="ajuda" element={<AjudaPage />} />
+
+          <Route path="configuracoes" element={<ConfiguracoesPage />}>
+            <Route index element={<Navigate to="perfil" replace />} />
+            <Route path="perfil" element={<ProfilePage />} />
+            <Route path="empresa" element={<EmpresaPage />} />
+            {/* Mesma tela do checkout: faturas, Pix e comprovante vêm da API.
+                `embutido` tira o cabeçalho e o padding próprios — Configurações
+                já fornece os dois. */}
+            <Route path="faturas" element={<CheckoutPage embutido />} />
+            <Route path="aparencia" element={<AparenciaTab />} />
+            <Route path="*" element={<NotFoundPage />} />
+          </Route>
+
+          <Route path="vendas" element={<SalesPage />}>
+            {/* Vendedor não tem visão geral da loja: entra direto nas próprias
+                vendas. Sem isso, abrir /vendas o levaria ao "geralzão". */}
+            <Route index element={ehGestor(user) ? <SalesOverviewPage /> : <Navigate to="/vendas/lista" replace />} />
+            <Route path="lista" element={<SalesList />} />
+            <Route
+              path="financeiro"
+              element={
+                <RecursoDoPlano recurso="financeiro" promessa="Caixa, contas a receber e o resultado do mês no mesmo lugar em que a venda acontece.">
+                  <FinanceiroPage />
+                </RecursoDoPlano>
+              }
+            />
+            <Route path="*" element={<NotFoundPage />} />
+          </Route>
+
+          <Route path="*" element={<NotFoundPage />} />
+        </Route>
+      )}
+
+      <Route path="*" element={<Navigate to={isLogged ? "/" : "/login"} replace />} />
+    </Routes>
+  );
+}
+
+const AppRoutes = () => {
+  useTheme();
+  const mobile = useIsMobile();
+  const { isLogged, initialize, loading } = useAuth();
+
+  useEffect(() => {
+    initialize();
+  }, [initialize]);
+
+  if (loading) {
+    return <Espera mobile={mobile} />;
+  }
+  return (
+    <BrowserRouter>
+      <AppRoutesContent isLogged={isLogged} mobile={mobile} />
+    </BrowserRouter>
+  );
+};
+
+export default AppRoutes;
